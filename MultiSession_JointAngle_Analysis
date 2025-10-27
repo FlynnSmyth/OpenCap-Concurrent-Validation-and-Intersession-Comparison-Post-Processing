@@ -1,0 +1,1549 @@
+## Important: This code only works within the established opencap-processing repository at https://github.com/stanfordnmbl/opencap-processing and wont work stand alone.
+
+
+
+import os
+import csv
+import utilsKinematics
+from utils import download_kinematics
+from utilsPlotting import plot_dataframe
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
+from scipy.signal import butter, filtfilt
+import pandas as pd
+import spm1d
+import matplotlib.patches as patches
+
+# Example
+# 4d5c3eb1-1a59-4ea1-9178-d3634610561c
+
+
+# %% User inputs.
+# Specify session id; see end of url in app.opencap.ai/session/<session_id>.
+session_id = "d81ae3d5-248f-4ef9-9f17-86c1b3ba4231" 
+session_id2 = "cd0c2500-9982-42d8-8ef6-670732d4640e"
+
+### Concurrent Validation Sessions:
+# 44366deb-9865-4cbc-a2eb-43b7078615f5              Concurrent Validation
+# d81ae3d5-248f-4ef9-9f17-86c1b3ba4231              Concurrent Validation 2 
+
+### Camera Angle sessions:
+# c8dc2ae7-d131-4f7b-b6ca-05e74a50585a              5Deg_SitToStand
+# 60e2ecf2-d5c3-46ff-b900-a60bc80c332e              15Deg_SitToStand
+# a5c39047-2eb7-4b3a-a6b3-440bffe1d4fd              25Deg_SitToStand
+# 16822613-4229-4ffc-803b-77753fa559ba              35Deg_SitToStand
+
+## Camera Distance sessions:
+# 989ff01f-7398-4ce1-837b-739b8cefb08f              SitToStand_CD_6M
+# ebbac891-5804-4eb4-87c0-54fc06988dc7              SitToStand_CD_8M
+# cd99c2b4-2974-4aa7-bd29-d042cf7de43f              SitToStand_CD_10M
+# ede0dba6-b8e7-429e-a01f-746ffe02f978              SitToStand_CD_12M
+# dd564cc7-1d90-4326-9941-0752ea115ec3              SitToStand_CD_14M
+# fecddb77-f9ff-4677-b2b2-a94d5f0eab43              SitToStand_CD_14M_NP14  (Neutral pose at 14m) 
+
+###Hotspot Test:
+# 7b7892dd-4cb7-4d03-ace0-e52589469028              Outdoor hotspot test
+# e7184a79-705c-4303-b66c-0d4b8ab61bf2              Hotspot_SitToStand
+
+###Calibration Board square size test:
+# fcbf5202-6a5a-4411-9cd7-ae54d241014c              SitToStand_BPD_ICB      (Incorrect CB - 33mm squares entered in as 35mm)
+# 5c5d41c9-56e9-47f6-a10d-8e1276c3c12a              SitToStand_BPD_CCB      (Correct CB)
+
+### Plane Of View Session:
+# cd0c2500-9982-42d8-8ef6-670732d4640e              SitToStand_POV
+POVDeg_30 = False                                      #These varriables will be used to determine which set of trials 
+POVDeg_45 = False                                      #in the POV session to look at. Just set the data set of 
+POVDeg_60 = False                                      #interest to true
+POVDeg_90 = True
+
+
+
+
+#Chosing which joints and movements to be examined
+joints_to_plot = ["pelvis_tilt", "pelvis_list", "pelvis_rotation", "hip_flexion_r", "hip_adduction_r", "hip_rotation_r", "knee_angle_r", "ankle_angle_r", "subtalar_angle_r", "hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_angle_l", "subtalar_angle_l"]
+
+joints_to_plot_combined = ["pelvis_tilt", "pelvis_list", "pelvis_rotation", "hip_flexion", "hip_adduction", "hip_rotation", "knee_angle", "ankle_angle", "subtalar_angle"]
+joints_to_plot_combined_no_pelvis = ["hip_flexion", "hip_adduction", "hip_rotation", "knee_angle", "ankle_angle", "subtalar_angle"]
+
+#configuring trial names and storage location for session 1:
+
+if session_id == "44366deb-9865-4cbc-a2eb-43b7078615f5":
+    specific_trial_names = ['SitToStand_CV_1', 'SitToStand_CV_1_1', 'SitToStand_CV_1_2', 'SitToStand_CV_1_3', 'SitToStand_CV_1_4','SitToStand_CV_1_5', 'SitToStand_CV_1_6', 'SitToStand_CV_1_7', 'SitToStand_CV_1_8', 'SitToStand_CV_1_9']
+    data_folder = os.path.join("./Data", "SitToStand_CV")
+elif session_id == "d81ae3d5-248f-4ef9-9f17-86c1b3ba4231":
+    specific_trial_names = ['CV2_01', 'CV2_02', 'CV2_03', 'CV2_04', 'CV2_05', 'CV2_06', 'CV2_07', 'CV2_08', 'CV2_09', 'CV2_10']
+    data_folder = os.path.join("./Data", "SitToStand_CV2")
+
+elif session_id == "c8dc2ae7-d131-4f7b-b6ca-05e74a50585a":
+    specific_trial_names = ['5Deg_SitToStand_1', '5Deg_SitToStand_2', '5Deg_SitToStand_3', '5Deg_SitToStand_4', '5Deg_SitToStand_5', '5Deg_SitToStand_6', '5Deg_SitToStand_7', '5Deg_SitToStand_8', '5Deg_SitToStand_9', '5Deg_SitToStand_10']
+    data_folder = os.path.join("./Data", "SitToStand_5Deg")
+elif session_id == "60e2ecf2-d5c3-46ff-b900-a60bc80c332e":
+    specific_trial_names = ['SitToStand_15Deg_1', 'SitToStand_15Deg_2', 'SitToStand_15Deg_3', 'SitToStand_15Deg_4', 'SitToStand_15Deg_5', 'SitToStand_15Deg_6', 'SitToStand_15Deg_7', 'SitToStand_15Deg_8', 'SitToStand_15Deg_9', 'SitToStand_15Deg_10']
+    data_folder = os.path.join("./Data", "SitToStand_15Deg")
+elif session_id == "a5c39047-2eb7-4b3a-a6b3-440bffe1d4fd":
+    specific_trial_names = ['25Deg_SitToStand_1', '25Deg_SitToStand_2', '25Deg_SitToStand_3', '25Deg_SitToStand_4', '25Deg_SitToStand_5', '25Deg_SitToStand_6', '25Deg_SitToStand_7', '25Deg_SitToStand_8', '25Deg_SitToStand_9', '25Deg_SitToStand_10']
+    data_folder = os.path.join("./Data", "SitToStand_25Deg")
+elif session_id == "16822613-4229-4ffc-803b-77753fa559ba":
+    specific_trial_names = ['35Deg_SitToStand_1', '35Deg_SitToStand_2', '35Deg_SitToStand_3', '35Deg_SitToStand_4', '35Deg_SitToStand_5', '35Deg_SitToStand_6', '35Deg_SitToStand_7', '35Deg_SitToStand_8', '35Deg_SitToStand_9', '35Deg_SitToStand_10']
+    data_folder = os.path.join("./Data", "SitToStand_35Deg")
+
+elif session_id == "989ff01f-7398-4ce1-837b-739b8cefb08f":
+    specific_trial_names = ['SitToStand_CD_6M_1', 'SitToStand_CD_6M_2', 'SitToStand_CD_6M_3', 'SitToStand_CD_6M_4', 'SitToStand_CD_6M_5', 'SitToStand_CD_6M_6', 'SitToStand_CD_6M_7', 'SitToStand_CD_6M_8', 'SitToStand_CD_6M_9', 'SitToStand_CD_6M_10']
+    data_folder = os.path.join("./Data", "SitToStand_CD_6M")
+elif session_id == "ebbac891-5804-4eb4-87c0-54fc06988dc7":
+    specific_trial_names = ['SitToStand_CD_8M_1', 'SitToStand_CD_8M_2', 'SitToStand_CD_8M_3', 'SitToStand_CD_8M_4', 'SitToStand_CD_8M_5', 'SitToStand_CD_8M_6', 'SitToStand_CD_8M_7', 'SitToStand_CD_8M_8', 'SitToStand_CD_8M_9', 'SitToStand_CD_8M_10']
+    data_folder = os.path.join("./Data", "SitToStand_CD_8M")
+elif session_id == "cd99c2b4-2974-4aa7-bd29-d042cf7de43f":
+    specific_trial_names = ['SitToStand_CD_10M_1', 'SitToStand_CD_10M_2', 'SitToStand_CD_10M_3', 'SitToStand_CD_10M_4', 'SitToStand_CD_10M_5', 'SitToStand_CD_10M_6', 'SitToStand_CD_10M_7', 'SitToStand_CD_10M_8', 'SitToStand_CD_10M_9', 'SitToStand_CD_10M_10']
+    data_folder = os.path.join("./Data", "SitToStand_CVD_10M")
+elif session_id == "ede0dba6-b8e7-429e-a01f-746ffe02f978":
+    specific_trial_names = ['SitToStand_CD_12M_1', 'SitToStand_CD_12M_2', 'SitToStand_CD_12M_3', 'SitToStand_CD_12M_4', 'SitToStand_CD_12M_5', 'SitToStand_CD_12M_6', 'SitToStand_CD_12M_7', 'SitToStand_CD_12M_8', 'SitToStand_CD_12M_9', 'SitToStand_CD_12M_10']
+    data_folder = os.path.join("./Data", "SitToStand_CD_12M")
+elif session_id == "dd564cc7-1d90-4326-9941-0752ea115ec3":
+    specific_trial_names = ['SitToStand_CD_14M_1', 'SitToStand_CD_14M_2', 'SitToStand_CD_14M_3', 'SitToStand_CD_14M_4', 'SitToStand_CD_14M_5', 'SitToStand_CD_14M_6', 'SitToStand_CD_14M_7', 'SitToStand_CD_14M_8', 'SitToStand_CD_14M_9', 'SitToStand_CD_14M_10']
+    data_folder = os.path.join("./Data", "SitToStand_CD_14M")
+elif session_id == "fecddb77-f9ff-4677-b2b2-a94d5f0eab43":
+    specific_trial_names = ['SitToStand_CD_14M_NP14_1', 'SitToStand_CD_14M_NP14_2', 'SitToStand_CD_14M_NP14_3', 'SitToStand_CD_14M_NP14_4', 'SitToStand_CD_14M_NP14_5', 'SitToStand_CD_14M_NP14_6', 'SitToStand_CD_14M_NP14_7', 'SitToStand_CD_14M_NP14_8', 'SitToStand_CD_14M_NP14_9', 'SitToStand_CD_14M_NP14_10']
+    data_folder = os.path.join("./Data", "SitToStand_CD_14M_NP14")
+
+elif session_id == "7b7892dd-4cb7-4d03-ace0-e52589469028":
+    specific_trial_names = ['Hotspot_Outdoor_LL4m_1', 'Hotspot_Outdoor_LL4m_2', 'Hotspot_Outdoor_LL4m_3', 'Hotspot_Outdoor_LL4m_4', 'Hotspot_Outdoor_LL4m_5', 'Hotspot_Outdoor_LL4m_6', 'Hotspot_Outdoor_LL4m_7', 'Hotspot_Outdoor_LL4m_8', 'Hotspot_Outdoor_LL4m_9', 'Hotspot_Outdoor_LL4m_10']
+    data_folder = os.path.join("./Data", "SitToStand_HSP_Outdoor")
+elif session_id == "e7184a79-705c-4303-b66c-0d4b8ab61bf2":
+    specific_trial_names = ['SitToStand_HP2_1', 'SitToStand_HP2_2', 'SitToStand_HP2_3', 'SitToStand_HP2_4', 'SitToStand_HP2_5', 'SitToStand_HP2_6', 'SitToStand_HP2_7', 'SitToStand_HP2_8', 'SitToStand_HP2_9', 'SitToStand_HP2_10']
+    data_folder = os.path.join("./Data", "SitToStand_HSP_Indoor")
+
+elif session_id == "fcbf5202-6a5a-4411-9cd7-ae54d241014c":
+    specific_trial_names = ['SitToStand_BPD_ICB_1', 'SitToStand_BPD_ICB_2', 'SitToStand_BPD_ICB_3', 'SitToStand_BPD_ICB_4', 'SitToStand_BPD_ICB_5', 'SitToStand_BPD_ICB_6', 'SitToStand_BPD_ICB_7', 'SitToStand_BPD_ICB_8', 'SitToStand_BPD_ICB_9', 'SitToStand_BPD_ICB_10']
+    data_folder = os.path.join("./Data", "SitToStand_ICB")
+elif session_id == "5c5d41c9-56e9-47f6-a10d-8e1276c3c12a":
+    specific_trial_names = ['SitToStand_BPD_CCB_1', 'SitToStand_BPD_CCB_2', 'SitToStand_BPD_CCB_3', 'SitToStand_BPD_CCB_4', 'SitToStand_BPD_CCB_5', 'SitToStand_BPD_CCB_6', 'SitToStand_BPD_CCB_7', 'SitToStand_BPD_CCB_8', 'SitToStand_BPD_CCB_9', 'SitToStand_BPD_CCB_10']
+    data_folder = os.path.join("./Data", "SitToStand_CCB")
+
+elif session_id == "cd0c2500-9982-42d8-8ef6-670732d4640e":
+    if POVDeg_30 == True:
+        specific_trial_names = ['SitToStand_POV30_1', 'SitToStand_POV30_2', 'SitToStand_POV30_3', 'SitToStand_POV30_4', 'SitToStand_POV30_5', 'SitToStand_POV30_6', 'SitToStand_POV30_7', 'SitToStand_POV30_8', 'SitToStand_POV30_9', 'SitToStand_POV30_10']
+        data_folder = os.path.join("./Data", "SitToStand_POV30")
+    elif POVDeg_45 == True:
+        specific_trial_names = ['SitToStand_POV45_1', 'SitToStand_POV45_2', 'SitToStand_POV45_3', 'SitToStand_POV45_4', 'SitToStand_POV45_5', 'SitToStand_POV45_6', 'SitToStand_POV45_7', 'SitToStand_POV45_8', 'SitToStand_POV45_9', 'SitToStand_POV45_10']
+        data_folder = os.path.join("./Data", "SitToStand_POV45")
+    elif POVDeg_60 == True:
+        specific_trial_names = ['SitToStand_POV60_1', 'SitToStand_POV60_2', 'SitToStand_POV60_3', 'SitToStand_POV60_4', 'SitToStand_POV60_5', 'SitToStand_POV60_6', 'SitToStand_POV60_7', 'SitToStand_POV60_8', 'SitToStand_POV60_9', 'SitToStand_POV60_10']
+        data_folder = os.path.join("./Data", "SitToStand_POV60")
+    elif POVDeg_90 == True:
+        specific_trial_names = ['SitToStand_POV90_1', 'SitToStand_POV90_2', 'SitToStand_POV90_3', 'SitToStand_POV90_4', 'SitToStand_POV90_5', 'SitToStand_POV90_6', 'SitToStand_POV90_7', 'SitToStand_POV90_8', 'SitToStand_POV90_9', 'SitToStand_POV90_10']
+        data_folder = os.path.join("./Data", "SitToStand_POV90")
+
+#configuring trial names and storage location for session 2
+
+if session_id2 == "44366deb-9865-4cbc-a2eb-43b7078615f5":
+    specific_trial_names2 = ['SitToStand_CV_1', 'SitToStand_CV_1_1', 'SitToStand_CV_1_2', 'SitToStand_CV_1_3', 'SitToStand_CV_1_4','SitToStand_CV_1_5', 'SitToStand_CV_1_6', 'SitToStand_CV_1_7', 'SitToStand_CV_1_8', 'SitToStand_CV_1_9']
+    data_folder2 = os.path.join("./Data", "SitToStand_CV")
+elif session_id2 == "d81ae3d5-248f-4ef9-9f17-86c1b3ba4231":
+    specific_trial_names2 = ['CV2_01', 'CV2_02', 'CV2_03', 'CV2_04', 'CV2_05', 'CV2_06', 'CV2_07', 'CV2_08', 'CV2_09', 'CV2_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CV2")
+
+elif session_id2 == "c8dc2ae7-d131-4f7b-b6ca-05e74a50585a":
+    specific_trial_names2 = ['5Deg_SitToStand_1', '5Deg_SitToStand_2', '5Deg_SitToStand_3', '5Deg_SitToStand_4', '5Deg_SitToStand_5', '5Deg_SitToStand_6', '5Deg_SitToStand_7', '5Deg_SitToStand_8', '5Deg_SitToStand_9', '5Deg_SitToStand_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_5Deg")
+elif session_id2 == "60e2ecf2-d5c3-46ff-b900-a60bc80c332e":
+    specific_trial_names2 = ['SitToStand_15Deg_1', 'SitToStand_15Deg_2', 'SitToStand_15Deg_3', 'SitToStand_15Deg_4', 'SitToStand_15Deg_5', 'SitToStand_15Deg_6', 'SitToStand_15Deg_7', 'SitToStand_15Deg_8', 'SitToStand_15Deg_9', 'SitToStand_15Deg_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_15Deg")
+elif session_id2 == "a5c39047-2eb7-4b3a-a6b3-440bffe1d4fd":
+    specific_trial_names2 = ['25Deg_SitToStand_1', '25Deg_SitToStand_2', '25Deg_SitToStand_3', '25Deg_SitToStand_4', '25Deg_SitToStand_5', '25Deg_SitToStand_6', '25Deg_SitToStand_7', '25Deg_SitToStand_8', '25Deg_SitToStand_9', '25Deg_SitToStand_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_25Deg")
+elif session_id2 == "16822613-4229-4ffc-803b-77753fa559ba":
+    specific_trial_names2 = ['35Deg_SitToStand_1', '35Deg_SitToStand_2', '35Deg_SitToStand_3', '35Deg_SitToStand_4', '35Deg_SitToStand_5', '35Deg_SitToStand_6', '35Deg_SitToStand_7', '35Deg_SitToStand_8', '35Deg_SitToStand_9', '35Deg_SitToStand_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_35Deg")
+
+elif session_id2 == "989ff01f-7398-4ce1-837b-739b8cefb08f":
+    specific_trial_names2 = ['SitToStand_CD_6M_1', 'SitToStand_CD_6M_2', 'SitToStand_CD_6M_3', 'SitToStand_CD_6M_4', 'SitToStand_CD_6M_5', 'SitToStand_CD_6M_6', 'SitToStand_CD_6M_7', 'SitToStand_CD_6M_8', 'SitToStand_CD_6M_9', 'SitToStand_CD_6M_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CD_6M")
+elif session_id2 == "ebbac891-5804-4eb4-87c0-54fc06988dc7":
+    specific_trial_names2 = ['SitToStand_CD_8M_1', 'SitToStand_CD_8M_2', 'SitToStand_CD_8M_3', 'SitToStand_CD_8M_4', 'SitToStand_CD_8M_5', 'SitToStand_CD_8M_6', 'SitToStand_CD_8M_7', 'SitToStand_CD_8M_8', 'SitToStand_CD_8M_9', 'SitToStand_CD_8M_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CD_8M")
+elif session_id2 == "cd99c2b4-2974-4aa7-bd29-d042cf7de43f":
+    specific_trial_names2 = ['SitToStand_CD_10M_1', 'SitToStand_CD_10M_2', 'SitToStand_CD_10M_3', 'SitToStand_CD_10M_4', 'SitToStand_CD_10M_5', 'SitToStand_CD_10M_6', 'SitToStand_CD_10M_7', 'SitToStand_CD_10M_8', 'SitToStand_CD_10M_9', 'SitToStand_CD_10M_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CVD_10M")
+elif session_id2 == "ede0dba6-b8e7-429e-a01f-746ffe02f978":
+    specific_trial_names2 = ['SitToStand_CD_12M_1', 'SitToStand_CD_12M_2', 'SitToStand_CD_12M_3', 'SitToStand_CD_12M_4', 'SitToStand_CD_12M_5', 'SitToStand_CD_12M_6', 'SitToStand_CD_12M_7', 'SitToStand_CD_12M_8', 'SitToStand_CD_12M_9', 'SitToStand_CD_12M_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CD_12M")
+elif session_id2 == "dd564cc7-1d90-4326-9941-0752ea115ec3":
+    specific_trial_names2 = ['SitToStand_CD_14M_1', 'SitToStand_CD_14M_2', 'SitToStand_CD_14M_3', 'SitToStand_CD_14M_4', 'SitToStand_CD_14M_5', 'SitToStand_CD_14M_6', 'SitToStand_CD_14M_7', 'SitToStand_CD_14M_8', 'SitToStand_CD_14M_9', 'SitToStand_CD_14M_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CD_14M")
+elif session_id2 == "fecddb77-f9ff-4677-b2b2-a94d5f0eab43":
+    specific_trial_names2 = ['SitToStand_CD_14M_NP14_1', 'SitToStand_CD_14M_NP14_2', 'SitToStand_CD_14M_NP14_3', 'SitToStand_CD_14M_NP14_4', 'SitToStand_CD_14M_NP14_5', 'SitToStand_CD_14M_NP14_6', 'SitToStand_CD_14M_NP14_7', 'SitToStand_CD_14M_NP14_8', 'SitToStand_CD_14M_NP14_9', 'SitToStand_CD_14M_NP14_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CD_14M_NP14")
+
+elif session_id2 == "7b7892dd-4cb7-4d03-ace0-e52589469028":
+    specific_trial_names2 = ['Hotspot_Outdoor_LL4m_1', 'Hotspot_Outdoor_LL4m_2', 'Hotspot_Outdoor_LL4m_3', 'Hotspot_Outdoor_LL4m_4', 'Hotspot_Outdoor_LL4m_5', 'Hotspot_Outdoor_LL4m_6', 'Hotspot_Outdoor_LL4m_7', 'Hotspot_Outdoor_LL4m_8', 'Hotspot_Outdoor_LL4m_9', 'Hotspot_Outdoor_LL4m_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_HSP_Outdoor")
+elif session_id2 == "e7184a79-705c-4303-b66c-0d4b8ab61bf2":
+    specific_trial_names2 = ['SitToStand_HP2_1', 'SitToStand_HP2_2', 'SitToStand_HP2_3', 'SitToStand_HP2_4', 'SitToStand_HP2_5', 'SitToStand_HP2_6', 'SitToStand_HP2_7', 'SitToStand_HP2_8', 'SitToStand_HP2_9', 'SitToStand_HP2_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_HSP_Indoor")
+
+elif session_id2 == "fcbf5202-6a5a-4411-9cd7-ae54d241014c":
+    specific_trial_names2 = ['SitToStand_BPD_ICB_1', 'SitToStand_BPD_ICB_2', 'SitToStand_BPD_ICB_3', 'SitToStand_BPD_ICB_4', 'SitToStand_BPD_ICB_5', 'SitToStand_BPD_ICB_6', 'SitToStand_BPD_ICB_7', 'SitToStand_BPD_ICB_8', 'SitToStand_BPD_ICB_9', 'SitToStand_BPD_ICB_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_ICB")
+elif session_id2 == "5c5d41c9-56e9-47f6-a10d-8e1276c3c12a":
+    specific_trial_names2 = ['SitToStand_BPD_CCB_1', 'SitToStand_BPD_CCB_2', 'SitToStand_BPD_CCB_3', 'SitToStand_BPD_CCB_4', 'SitToStand_BPD_CCB_5', 'SitToStand_BPD_CCB_6', 'SitToStand_BPD_CCB_7', 'SitToStand_BPD_CCB_8', 'SitToStand_BPD_CCB_9', 'SitToStand_BPD_CCB_10']
+    data_folder2 = os.path.join("./Data", "SitToStand_CCB")
+
+elif session_id2 == "cd0c2500-9982-42d8-8ef6-670732d4640e":
+    if POVDeg_30 == True:
+        specific_trial_names2 = ['SitToStand_POV30_1', 'SitToStand_POV30_2', 'SitToStand_POV30_3', 'SitToStand_POV30_4', 'SitToStand_POV30_5', 'SitToStand_POV30_6', 'SitToStand_POV30_7', 'SitToStand_POV30_8', 'SitToStand_POV30_9', 'SitToStand_POV30_10']
+        data_folder2 = os.path.join("./Data", "SitToStand_POV30")
+    elif POVDeg_45 == True:
+        specific_trial_names2 = ['SitToStand_POV45_1', 'SitToStand_POV45_2', 'SitToStand_POV45_3', 'SitToStand_POV45_4', 'SitToStand_POV45_5', 'SitToStand_POV45_6', 'SitToStand_POV45_7', 'SitToStand_POV45_8', 'SitToStand_POV45_9', 'SitToStand_POV45_10']
+        data_folder2 = os.path.join("./Data", "SitToStand_POV45")
+    elif POVDeg_60 == True:
+        specific_trial_names2 = ['SitToStand_POV60_1', 'SitToStand_POV60_2', 'SitToStand_POV60_3', 'SitToStand_POV60_4', 'SitToStand_POV60_5', 'SitToStand_POV60_6', 'SitToStand_POV60_7', 'SitToStand_POV60_8', 'SitToStand_POV60_9', 'SitToStand_POV60_10']
+        data_folder2 = os.path.join("./Data", "SitToStand_POV60")
+    elif POVDeg_90 == True:
+        specific_trial_names2 = ['SitToStand_POV90_1', 'SitToStand_POV90_2', 'SitToStand_POV90_3', 'SitToStand_POV90_4', 'SitToStand_POV90_5', 'SitToStand_POV90_6', 'SitToStand_POV90_7', 'SitToStand_POV90_8', 'SitToStand_POV90_9', 'SitToStand_POV90_10']
+        data_folder2 = os.path.join("./Data", "SitToStand_POV90")
+
+
+
+# %% Download data.
+def load_session(session_id, specific_trial_names, data_folder):
+    """
+    Download and process kinematics for a given session.
+
+    Returns:
+        coordinates (dict), trial_names (list), modelName (str)
+    """    
+    trial_names, modelName = download_kinematics(session_id, folder=data_folder, trialNames=specific_trial_names)
+
+    # Process data.
+    kinematics, coordinates, muscle_tendon_lengths, moment_arms, center_of_mass = {}, {}, {}, {}, {}
+    coordinates['values'], coordinates['speeds'], coordinates['accelerations'] = {}, {}, {}
+    center_of_mass['values'], center_of_mass['speeds'], center_of_mass['accelerations'] = {}, {}, {}
+
+    for trial_name in trial_names:
+        # Create object from class kinematics.
+        kinematics[trial_name] = utilsKinematics.kinematics(data_folder, trial_name, modelName=modelName, lowpass_cutoff_frequency_for_coordinate_values=10)
+        
+        # store coordinate values, speeds, and accelerations.
+        coordinates['values'][trial_name] = kinematics[trial_name].get_coordinate_values(in_degrees=True) # already filtered
+        coordinates['speeds'][trial_name] = kinematics[trial_name].get_coordinate_speeds(in_degrees=True, lowpass_cutoff_frequency=10)
+        coordinates['accelerations'][trial_name] = kinematics[trial_name].get_coordinate_accelerations(in_degrees=True, lowpass_cutoff_frequency=10)
+        
+        
+        # # # store center of mass values, speeds, and accelerations.
+        # center_of_mass['values'][trial_name] = kinematics[trial_name].get_center_of_mass_values(lowpass_cutoff_frequency=10)
+        # center_of_mass['speeds'][trial_name] = kinematics[trial_name].get_center_of_mass_speeds(lowpass_cutoff_frequency=10)
+        # center_of_mass['accelerations'][trial_name] = kinematics[trial_name].get_center_of_mass_accelerations(lowpass_cutoff_frequency=10)
+    
+    return coordinates, trial_names, modelName   
+    
+#################################################################################################################################################
+
+#for looking and comparing the data from the trials of a single session use the following code:
+
+### coordinates, trial_names, modelName = load_session(session_id, specific_trial_names, data_folder)
+
+#for looking and comparing the data from the trials between 2 sessions use the following code, not for concurrent validation trials:
+
+coordinates_S1, trials_S1, _ = load_session(session_id, specific_trial_names, data_folder)
+coordinates_S2, trials_S2, _ = load_session(session_id2, specific_trial_names2, data_folder2)
+
+# Setting specific coordinate and trial names for concurrent validation
+if session_id == "44366deb-9865-4cbc-a2eb-43b7078615f5" or session_id == "d81ae3d5-248f-4ef9-9f17-86c1b3ba4231":
+    coordinates_CV = coordinates_S1
+    trials_CV = trials_S1
+else:
+    coordinates_CV = None
+    trials_CV = None
+
+
+##################################################################################################################################################
+
+
+
+# %% Load Vicon data.
+
+def load_vicon_data(folder_path, fs=100):
+    """
+    Load Vicon CSVs, reconstruct joint names from header rows, and return a dict of DataFrames.
+    """
+    vicon_data = {}
+
+    for file in os.listdir(folder_path):
+        if file.lower().endswith(".csv"):
+            trial_name = os.path.splitext(file)[0]
+            file_path = os.path.join(folder_path, file)
+            try:
+                # Read the first 4 rows to get headers
+                with open(file_path, "r") as f:
+                    header_lines = [next(f) for _ in range(4)]
+                joint_names = header_lines[2].strip().split(",")
+                axes = header_lines[3].strip().split(",")
+                # Read the actual data, skipping first 4 rows
+                df = pd.read_csv(file_path, skiprows=4, header=None)
+                # Build new column names
+                columns = []
+                last_joint = ""
+                for i in range(len(df.columns)):
+                    j = joint_names[i] if i < len(joint_names) else ""
+                    a = axes[i] if i < len(axes) else ""
+                    if j:
+                        last_joint = j
+                    if last_joint and a:
+                        columns.append(f"{last_joint}_{a}".replace(" ", ""))
+                    elif last_joint:
+                        columns.append(last_joint)
+                    elif a:
+                        columns.append(a)
+                    else:
+                        columns.append(f"col{i}")
+                df.columns = columns
+
+                # Drop any rows where 'Frame' is not a number (e.g., 'deg', 'Frame', or NaN)
+                df = df[pd.to_numeric(df['Frame'], errors='coerce').notnull()]
+                df['Frame'] = df['Frame'].astype(int)
+
+                # Convert all joint angle columns to numeric, coerce errors to NaN
+                for col in df.columns:
+                    if col not in ['Frame', 'Sub Frame', 'time']:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+                # Drop any rows with NaN in any of the joint angle columns you care about
+                joint_angle_cols = [c for c in df.columns if c.startswith('P_001:') and c.endswith(('_X', '_Y', '_Z'))]
+                df = df.dropna(subset=joint_angle_cols)
+
+                # Add time column if Frame exists
+                frame_col = None
+                for col in df.columns:
+                    if isinstance(col, str) and col.strip().lower() == "frame":
+                        frame_col = col
+                        break
+                if frame_col is not None:
+                    df["time"] = df[frame_col].values / fs
+                else:
+                    print(f"⚠️ Warning: No 'Frame' column in Vicon trial {trial_name}")
+
+                # print(f"{trial_name} columns: {df.columns.tolist()}")
+                vicon_data[trial_name] = df
+            except Exception as e:
+                print(f"⚠️ Skipping {file}: {e}")
+                continue
+
+    print(f"✅ Loaded {len(vicon_data)} Vicon trials from {folder_path}")
+    return vicon_data
+
+
+
+# Example usage
+if session_id == "44366deb-9865-4cbc-a2eb-43b7078615f5":
+    folder_path = r"C:\Users\Flynn\OneDrive\Desktop\University\Year 4 Semester 1\STEM7004(A-C) Honours Research Project\Results\Vicon kinematic data"
+elif session_id == "d81ae3d5-248f-4ef9-9f17-86c1b3ba4231":
+    folder_path = r"C:\Users\Flynn\OneDrive\Desktop\University\Year 4 Semester 1\STEM7004(A-C) Honours Research Project\Results\Vicon kinematic data 2"
+vicon_data = load_vicon_data(folder_path)
+
+# print(vicon_data.keys())
+
+
+# Vicon-to-OpenCap joint mapping for hip, knee and ankle movements (X axis)
+vicon_to_opencap = {
+    "P_001:RPelvisAngles_X": "pelvis_tilt",
+    "P_001:RPelvisAngles_Y": "pelvis_list",
+    "P_001:RPelvisAngles_Z": "pelvis_rotation",
+    "P_001:RHipAngles_X": "hip_flexion_r",
+    "P_001:RKneeAngles_X": "knee_angle_r",
+    "P_001:RAnkleAngles_X": "ankle_angle_r",
+    "P_001:LHipAngles_X": "hip_flexion_l",
+    "P_001:LKneeAngles_X": "knee_angle_l",
+    "P_001:LAnkleAngles_X": "ankle_angle_l",
+    "P_001:RHipAngles_Y": "hip_adduction_r",
+    "P_001:RHipAngles_Z": "hip_rotation_r",
+    "P_001:LHipAngles_Y": "hip_adduction_l",
+    "P_001:LHipAngles_Z": "hip_rotation_l",
+    "P_001:RAnkleAngles_Y": "subtalar_angle_r",
+    "P_001:LAnkleAngles_Y": "subtalar_angle_l",
+}
+
+def extract_vicon_joint_angles(vicon_data, vicon_to_opencap, fs=100):
+    """
+    Converts Vicon DataFrames to a dict of joint angle arrays using the mapping.
+    Always generates a time array from Frame if time is missing.
+    Returns: dict[trial][joint] = np.array of joint angle values
+    """
+    coordinates_vicon = {'values': {}, 'time': {}}
+    for trial, df in vicon_data.items():
+        coordinates_vicon['values'][trial] = {}
+        # Try to find the Frame column robustly
+        frame_col = None
+        for col in df.columns:
+            if isinstance(col, str) and col.strip().lower() == "frame":
+                frame_col = col
+                break
+        if 'time' in df.columns:
+            coordinates_vicon['time'][trial] = df['time'].values
+        elif frame_col is not None:
+            coordinates_vicon['time'][trial] = df[frame_col].values / fs
+        else:
+            coordinates_vicon['time'][trial] = None
+            print(f"⚠️ Warning: No 'Frame' or 'time' column in Vicon trial {trial}")
+        for vicon_col, opencap_joint in vicon_to_opencap.items():
+            if vicon_col in df.columns:
+                coordinates_vicon['values'][trial][opencap_joint] = df[vicon_col].values
+    return coordinates_vicon
+
+# Usage example:
+coordinates_vicon = extract_vicon_joint_angles(vicon_data, vicon_to_opencap)
+
+if session_id == "44366deb-9865-4cbc-a2eb-43b7078615f5":        #if CV session 1
+    trials_vicon = ['SitToStand_CV_1', 'SitToStand_CV_2', 'SitToStand_CV_3', 'SitToStand_CV_4', 'SitToStand_CV_5', 'SitToStand_CV_6', 'SitToStand_CV_7', 'SitToStand_CV_8', 'SitToStand_CV_9', 'SitToStand_CV_10']
+
+    # Map Vicon trial names to OpenCap trial names
+    vicon_to_opencap = {
+    'SitToStand_CV_1': 'SitToStand_CV_1',
+    'SitToStand_CV_2': 'SitToStand_CV_1_1',
+    'SitToStand_CV_3': 'SitToStand_CV_1_2',
+    'SitToStand_CV_4': 'SitToStand_CV_1_3',
+    'SitToStand_CV_5': 'SitToStand_CV_1_4',
+    'SitToStand_CV_6': 'SitToStand_CV_1_5',
+    'SitToStand_CV_7': 'SitToStand_CV_1_6',
+    'SitToStand_CV_8': 'SitToStand_CV_1_7',
+    'SitToStand_CV_9': 'SitToStand_CV_1_8',
+    'SitToStand_CV_10': 'SitToStand_CV_1_9',
+}
+
+elif session_id == "d81ae3d5-248f-4ef9-9f17-86c1b3ba4231":      #if CV session 2
+    trials_vicon = ['CV2_01', 'CV2_02', 'CV2_03', 'CV2_04', 'CV2_05', 'CV2_06', 'CV2_07', 'CV2_08', 'CV2_09', 'CV2_10']
+
+    # Map Vicon trial names to OpenCap trial names
+    vicon_to_opencap = {
+    'CV2_01': 'CV2_01',
+    'CV2_02': 'CV2_02',
+    'CV2_03': 'CV2_03',
+    'CV2_04': 'CV2_04',
+    'CV2_05': 'CV2_05',
+    'CV2_06': 'CV2_06',
+    'CV2_07': 'CV2_07',
+    'CV2_08': 'CV2_08',
+    'CV2_09': 'CV2_09',
+    'CV2_10': 'CV2_10',
+}
+
+# Re-key OpenCap data to match Vicon trial names
+def rekey_opencap_trials(coordinates_CV, vicon_to_opencap):
+    new_coordinates = {'values': {}, 'speeds': {}, 'accelerations': {}}
+    for vicon_name, opencap_name in vicon_to_opencap.items():
+        if opencap_name in coordinates_CV['values']:
+            new_coordinates['values'][vicon_name] = coordinates_CV['values'][opencap_name]
+            new_coordinates['speeds'][vicon_name] = coordinates_CV['speeds'][opencap_name]
+            new_coordinates['accelerations'][vicon_name] = coordinates_CV['accelerations'][opencap_name]
+    return new_coordinates
+
+if coordinates_CV is not None:
+    coordinates_CV = rekey_opencap_trials(coordinates_CV, vicon_to_opencap)
+    trials_CV = list(vicon_to_opencap.keys())
+
+
+def upsample_opencap_to_vicon(coordinates_CV, trials_CV, target_fs=100):
+    """
+    Upsample all OpenCap joint angle data to match Vicon's sample rate (default 100 Hz).
+    Returns a new dictionary with upsampled data and a common time base.
+    """
+    upsampled = {'values': {}, 'speeds': {}, 'time': {}}
+    for trial in trials_CV:
+        # Get original time array and determine new time base
+        time_orig = coordinates_CV['speeds'][trial]['time']
+        time_orig = np.asarray(time_orig)  # <-- Add this line
+        t_start, t_end = time_orig[0], time_orig[-1]
+        n_samples = int(np.round((t_end - t_start) * target_fs)) + 1
+        time_new = np.linspace(t_start, t_end, n_samples)
+        upsampled['time'][trial] = time_new
+        upsampled['values'][trial] = {}
+        upsampled['speeds'][trial] = {}
+
+        # Upsample all joint angles
+        for joint, arr in coordinates_CV['values'][trial].items():
+            arr = np.asarray(arr)
+            if len(arr) == len(time_orig):
+                arr_upsampled = np.interp(time_new, time_orig, arr)
+                upsampled['values'][trial][joint] = arr_upsampled
+            else:
+                # If array length doesn't match time, skip or handle as needed
+                continue
+
+        # Optionally upsample speeds as well
+        for joint, arr in coordinates_CV['speeds'][trial].items():
+            if joint == 'time':
+                continue
+            arr = np.asarray(arr)
+            if len(arr) == len(time_orig):
+                arr_upsampled = np.interp(time_new, time_orig, arr)
+                upsampled['speeds'][trial][joint] = arr_upsampled
+
+        upsampled['speeds'][trial]['time'] = time_new
+
+    return upsampled
+
+if coordinates_CV is not None:
+    upsampled_CV = upsample_opencap_to_vicon(coordinates_CV, trials_CV, target_fs=100)
+
+
+# Combine left and right after normalization
+def get_combined_waveform(coordinates, trial, joint_combined, idx1, idx2, num_points=101):
+    left = f"{joint_combined}_l"
+    right = f"{joint_combined}_r"
+    values_left = coordinates['values'][trial][left]
+    values_right = coordinates['values'][trial][right]
+    time = coordinates['time'][trial]
+    _, norm_left = normalize_cycle(time, values_left, idx1, idx2, num_points)
+    _, norm_right = normalize_cycle(time, values_right, idx1, idx2, num_points)
+    combined = (norm_left + norm_right) / 2
+    return combined
+
+
+# combine left and right joints if needed
+combine_right_left = True
+
+
+# Can only use the following code when looking at a single session
+
+# %% Print as csv: example.
+# for trial in trial_names:
+#     output_csv_dir = os.path.join(data_folder, 'OpenSimData', 'Kinematics', 'Outputs')
+#     os.makedirs(output_csv_dir, exist_ok=True)
+#     output_csv_path = os.path.join(output_csv_dir, 'coordinate_speeds_{}.csv'.format(trial))
+#     coordinates['speeds'][trial].to_csv(output_csv_path)
+
+
+# %% Save joint angles to CSV for concurrent validation trials.
+for trial in trials_vicon:
+    output_dir = os.path.join('Data', 'Vicon_Sit_To_Stand_CV')
+    os.makedirs(output_dir, exist_ok=True)
+    output_csv = os.path.join(output_dir, f"{trial}_joint_angles.csv")
+
+    # Build DataFrame: each joint is a column, plus time if available
+    data = {}
+    for joint, arr in coordinates_vicon['values'][trial].items():
+        data[joint] = arr
+    if trial in coordinates_vicon['time']:
+        data['time'] = coordinates_vicon['time'][trial]
+
+    df = pd.DataFrame(data)
+    df.to_csv(output_csv, index=False)
+    print(f"✅ Saved joint angles for {trial} to {output_csv}")
+
+
+
+# %% movement cycle normalisation functions.
+
+def butter_lowpass_filter(data, cutoff, fs, order=4):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return filtfilt(b, a, data)
+
+
+def find_first_index_after_point_LTT(arr, start_index, threshold=None, consecutive=5, cutoff=None, fs=None, baseline_window=40, baseline_multiplier=2):      #larger than threshold
+    """
+    Finds the first value in a NumPy array where the values are greater than a threshold for consequtive samples in a row,
+    starting from a specified index. This should prevent false movement inititation detection from noise.
+
+    Args:
+        arr (np.ndarray): Input array.
+        start_index (int): Start search after this index.
+        threshold (float, optional): Fixed threshold. If None, baseline-relative threshold is used.
+        consecutive (int): Consecutive samples above threshold required.
+        cutoff (float, optional): Low-pass filter cutoff frequency.
+        fs (float, optional): Sampling frequency for filtering.
+        baseline_window (int): Number of initial samples to compute baseline.
+        baseline_multiplier (float): Multiplier for baseline std to define threshold.
+    
+    Returns:
+        float or int: The first value found, or None if no such value exists.
+    """
+    arr = np.asarray(arr)
+
+    # Apply low-pass filter if cutoff and fs are provided
+    if cutoff is not None and fs is not None:
+        arr = butter_lowpass_filter(arr, cutoff=cutoff, fs=fs)
+        # print(arr)
+
+    # Compute baseline-relative threshold if threshold not provided
+    if threshold is None:
+        baseline_offset = 5  # number of points to skip
+        baseline = arr[baseline_offset:baseline_offset + baseline_window]
+        threshold = np.mean(baseline) + 1 + baseline_multiplier * np.std(baseline) #add 1 degree to ensure that the threashold is high enough when very low basline std
+        # print(f"threshold = {threshold}")
+
+
+    if start_index >= len(arr) - consecutive:
+        return None  # Start index out of bounds
+
+    # Slice the array from the start_index
+    # also take absolute value of the threshold
+    sub_array = np.abs(arr[start_index:])
+
+    for i in range(len(sub_array) - consecutive):
+        #find indices where the condition is met, ie number of consective elements are above the threshold
+        if np.all(sub_array[i:i+consecutive] > threshold):  
+             return start_index + i    #the '+ i' is the postion in the subarray where the condition is met
+    return None # No value found after the start_index that meets the condition
+
+    
+
+def find_first_index_after_point_STT(arr, threshold_low, threshold_high, consecutive = 5, cutoff=6, fs=None):      #Smaller than threshold
+    """
+    Finds the first value in a NumPy array where the values are below a threshold for consequtive samples in a row,
+    starting from a specified index. This should prevent false movement completeion detection from noise.
+
+
+    Args:
+        arr (np.ndarray): The input NumPy array.
+        threshold_low (float): The "below" threshold for detecting end of the movement.
+        threshold_high (float): The "above" threshold to confirm movement started or start index.
+        consecutive (int): Number of consecutive points required both above 
+                           threshold_high (start) and below threshold_low (end).
+
+    Returns:
+        float or int: The first value found, or None if no such value exists.
+    """
+
+    arr = np.asarray(arr)
+
+    # Apply low-pass filter if cutoff and fs are provided
+    if cutoff is not None and fs is not None:
+        arr = butter_lowpass_filter(arr, cutoff=cutoff, fs=fs)
+
+    start_index = None
+    for i in range(len(arr) - consecutive + 1):              #this loop is to find the intiation of the knee extension, then save this as the start index
+        if np.all(np.abs(arr[i:i+consecutive]) > threshold_high):
+            start_index = i
+            break
+
+    if start_index is None:
+        return None  # never found "movement start"
+
+    # Slice the array from the start_index
+    # also take absolute value of the threshold
+    sub_array = np.abs(arr[start_index:])
+
+    # for j in range(len(sub_array) - consecutive):
+    for j in range(len(sub_array) - 10): 
+        #find indices where the condition is met, ie number of consective elements are above the threshold 
+        # if np.all(sub_array[j:j+consecutive] < threshold_low):
+        if sub_array[j] < 10 and abs(sub_array[j] - sub_array[j + 10]) < threshold_low:  # knee angle less than 10 degrees and the change in angle is less than 2 degrees for 10 frames.
+            return start_index + j    #the '+ j' is the as i is the postion in the subarray where the condition is met
+    return None # No value found after the start_index that meets the condition
+    
+
+
+def find_allignment_index_CV(knee_angle_arr, hip_flexion_arr):
+    """
+    Finds the index in a NumPy array where the values for right knee flexion angle comes to its first minimum
+    to be used to allign the opencap data with the vicon data for the concurent validity study. 
+
+    Args:
+        knee_angle_arr (np.ndarray): The input NumPy array for right knee angle.
+        hip_flexion_arr (np.ndarray): The input NumPy array for right hip flexion angle.
+"""
+    arr = np.asarray(knee_angle_arr)
+
+    # Determine the search index (maximum hip flexion) for either the OpenCap or Vicon data
+    hipflexion_arr = np.asarray(hip_flexion_arr)
+    search_index = np.argmax(hipflexion_arr)
+
+    sub_arr = arr[0:search_index+1]  # Slice the array up to the search index
+
+    idx_al = np.argmin(sub_arr)  # Find the index of the minimum value
+    return idx_al
+
+
+def find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, fs_vicon=100):
+    """
+    Finds start and end indices for all trials in the concurrent validity study,
+    aligning Vicon and OpenCap data using the alignment index.
+    Upsamples OpenCap data to match Vicon's sampling rate.
+
+    Args:
+        coordinates_vicon (dict): The Vicon coordinates dictionary.
+        trials_vicon (list): List of Vicon trial names.
+        coordinates_CV (dict): The OpenCap coordinates dictionary for concurrent validity.
+        trials_CV (list): List of OpenCap trial names.
+
+    Returns:
+        dict: A dictionary with trial names as keys and (idx1, idx2) tuples as values.
+    """
+    indices = {}
+    for trial in trials_vicon or trials_CV:
+        # 1. Get Vicon arrays
+        R_knee_vicon = coordinates_vicon['values'][trial]['knee_angle_r']
+        R_hip_vicon = coordinates_vicon['values'][trial]['hip_flexion_r']
+        
+        # 2. Upsample OpenCap data to 100 Hz
+        knee_CV = upsampled_CV['values'][trial]['knee_angle_r']
+        hip_CV = upsampled_CV['values'][trial]['hip_flexion_r']
+    
+        # 3. Find alignment index in Vicon and OpenCap
+        idx_align = find_allignment_index_CV(R_knee_vicon, R_hip_vicon)
+        idx_align2 = find_allignment_index_CV(knee_CV, hip_CV)
+
+        # 3. Find start (idx1) index in Vicon
+        arr = np.asarray(R_hip_vicon)
+        baseline = arr[idx_align:idx_align + 30]
+        threshold = np.mean(baseline) +  5   # dynamic threshold set to 5 degrees above mean hip flexion at alignment point
+        sub_array = arr[idx_align:]
+        for i in range(len(sub_array)-2):
+            if np.all(sub_array[i:i+2] > threshold): # hip flexion greater than threshold for at least 0.02s
+               idx1_vicon = idx_align + i
+               idx1_opencap = idx_align2 + i
+               break
+
+        # 3. Find end (idx2) index in Vicon
+        arr2 = np.asarray(R_knee_vicon)
+        sub_array2 = arr2[idx1_vicon+50:]  # start searching for end index at least 0.5s after start index
+        for j in range(len(sub_array2)-5):
+            if sub_array2[j] <15 and abs(sub_array2[j]-sub_array2[j+10]) < 2: # knee angle less than 15 degrees and the change in angle is less than 2 degrees over 0.1s
+               idx2_vicon = idx1_vicon + 50 + j
+               idx2_opencap = idx1_opencap + 50 + j
+               break
+
+
+        # 5. Store indices and upsampled arrays if needed
+        indices[trial] = {
+            'idx1_vicon': idx1_vicon,
+            'idx2_vicon': idx2_vicon,
+            'idx1_opencap': idx1_opencap,
+            'idx2_opencap': idx2_opencap,
+        }
+    return indices
+
+
+def plot_joint_grid(coordinates_A, trials_A, coordinates_B, trials_B, joints_to_plot_combined, num_points=101, label_A="Session A", label_B="Session B"):
+    n_joints = len(joints_to_plot_combined)
+    n_cols = 3
+    n_rows = int(np.ceil(n_joints / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.5*n_cols, 3.5*n_rows), sharex=True)
+    axes = axes.flatten()
+
+    legend_handles = []
+    legend_labels = []
+
+    for i, joint_base in enumerate(joints_to_plot_combined):
+        ax = axes[i]
+        percent_A, mean_A, std_A = get_session_mean(coordinates_A, trials_A, joint_base, combine_right_left=True)
+        percent_B, mean_B, std_B = get_session_mean(coordinates_B, trials_B, joint_base, combine_right_left=True)
+        if mean_A is None or mean_B is None:
+            ax.set_visible(False)
+            continue
+
+        h1, = ax.plot(percent_A, mean_A, color="blue", linewidth=2, label=f"{label_A} Mean")
+        ax.fill_between(percent_A, mean_A-std_A, mean_A+std_A, color="blue", alpha=0.2)
+        h2, = ax.plot(percent_B, mean_B, color="red", linewidth=2, label=f"{label_B} Mean")
+        ax.fill_between(percent_B, mean_B-std_B, mean_B+std_B, color="red", alpha=0.2)
+        ax.set_title(joint_base.replace("_", " ").title(), fontsize=14)
+        # Only set x-label for bottom row
+        if i // n_cols == n_rows - 1:
+            ax.set_xlabel("Movement Cycle (%)", fontsize=12)
+        # Only set y-label for first column
+        if i % n_cols == 0:
+            ax.set_ylabel("Angle (deg)", fontsize=12)
+        ax.grid(True)
+
+        if not legend_handles:
+            legend_handles.extend([h1, h2])
+            legend_labels.extend([f"{label_A} Mean", f"{label_B} Mean"])
+
+    # Hide unused axes
+    for j in range(i+1, len(axes)):
+        axes[j].set_visible(False)
+
+    # Place a single legend below the grid
+    fig.legend(legend_handles, legend_labels, loc='lower center', bbox_to_anchor=(0.5, -0.02), ncol=2, fontsize=14, frameon=False)
+
+    plt.tight_layout(rect=[0, 0.05, 1, 1])  # leave space at bottom for legend
+    plt.show()
+
+# Example usage for two OpenCap sessions:
+# plot_joint_grid(coordinates_S1, trials_S1, coordinates_S2, trials_S2, joints_to_plot_combined, num_points=101, label_A="OpenCap S1", label_B="OpenCap S2")
+
+# Example usage for Vicon vs OpenCap:
+# plot_joint_grid(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, joints_to_plot_combined, num_points=101, label_A="Vicon", label_B="OpenCap")
+
+
+def normalize_cycle(time, values, idx1, idx2, num_points=101):
+        """
+        Normalize a movement cycle between two indices to 0–100%.
+
+        Args:
+            time (np.ndarray): Time array.
+            values (np.ndarray): Coordinate values (same length as time).
+            idx1 (int): Start index.
+            idx2 (int): End index.
+            num_points (int): Number of samples in the normalized cycle (default 101).
+
+        Returns:
+            tuple: (percent_cycle, normalized_values)
+        """
+        # Slice the arrays
+        time_segment = time[idx1:idx2+1]
+        values_segment = values[idx1:idx2+1]
+
+        # Normalize time to 0–100%
+        percent_cycle = np.linspace(0, 100, num_points)
+
+        # Interpolate values onto the new scale
+        f_interp = interp1d(np.linspace(0, 100, len(values_segment)), values_segment, kind='linear')
+        normalized_values = f_interp(percent_cycle)
+
+        return percent_cycle, normalized_values
+
+
+
+#Function for plotting the normalised movement waveform for each traial of a chosen movement in a single session:
+
+def plot_normalized_waveforms(coordinates, trial_names, joints_to_plot, joints_to_plot_combined, num_points=101):
+    if combine_right_left:
+        # Plot combined left/right joints
+        for joint_base in joints_to_plot_combined:
+            # Figure for all normalized overlays (one figure for all trials for each joint)
+            plt.figure(figsize=(10, 6))
+            all_norms = []
+            valid_trials = []
+
+            for trial in trial_names:
+                if coordinates == coordinates_vicon or coordinates_CV:    # when looking at Vicon data
+                # set time and for Vicon/coordinates_CV
+                    if coordinates == coordinates_vicon:
+                        time = coordinates['time'][trial]
+                        indicies = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+                        idx1 = indicies[trial]["idx1_vicon"]
+                        idx2 = indicies[trial]["idx2_vicon"]
+                    else:
+                        time = coordinates['values'][trial]['time']
+                        indicies = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+                        idx1 = indicies[trial]["idx1_opencap"]
+                        idx2 = indicies[trial]["idx2_opencap"]
+
+                else:
+                    time = coordinates['speeds'][trial]['time']
+                    # hipflexion_speed = coordinates['speeds'][trial]['hip_flexion_r']
+                    # knee_angle_speed = coordinates['speeds'][trial]['knee_angle_r']
+                    hipflexion_angle = coordinates['values'][trial]['hip_flexion_r']
+                    knee_angle = coordinates['values'][trial]['knee_angle_r']
+                    dt = time[1] - time[0]
+                    fs = 1.0 / dt  # sampling frequency
+
+                    # find start/end indices for each trial
+
+                    idx1 = find_first_index_after_point_LTT(hipflexion_angle, start_index=40, threshold=None, consecutive=10, cutoff=None, fs=None, baseline_window=40, baseline_multiplier=3) #cutoff =3 when using speeds and not values
+                    idx2 = find_first_index_after_point_STT(knee_angle, threshold_low=2,threshold_high=30, consecutive=5, cutoff=None, fs=None)
+                    if idx1 is not None and idx2 is not None:
+                        print(f"{trial}: idx1={idx1}, idx2={idx2}")
+
+                # Validate indices
+                if idx1 is None or idx2 is None or idx1 >= idx2:
+                    print(f"{trial}: invalid thresholds {joint_base} (idx1={idx1}, idx2={idx2}) -> skipping")
+                    continue
+
+                left = f"{joint_base}_l"
+                right = f"{joint_base}_r"
+                has_left = left in coordinates['values'][trial]
+                has_right = right in coordinates['values'][trial]
+                has_base = joint_base in coordinates['values'][trial]   
+
+                # Combine left/right if both exist, else use base joint if available
+                if has_left and has_right:
+                    # Normalize cycle and plot onto the shared normalized figure
+                    values_left = coordinates['values'][trial][left]
+                    values_right = coordinates['values'][trial][right]
+                    _, norm_left = normalize_cycle(time, values_left, idx1, idx2, num_points)
+                    _, norm_right = normalize_cycle(time, values_right, idx1, idx2, num_points)
+                    values_norm = (norm_left + norm_right) / 2
+                elif has_base:
+                    values = coordinates['values'][trial][joint_base]
+                    _, values_norm = normalize_cycle(time, values, idx1, idx2, num_points)
+                else:
+                    continue
+                
+                # values_norm = get_combined_waveform(coordinates, trial, joint_base, idx1, idx2, num_points)
+                
+                
+                percent_cycle = np.linspace(0, 100, num_points)
+                # plotting each trial with some transparency so overlapping is visible
+                plt.plot(percent_cycle, values_norm, label=trial, alpha=0.5, linewidth=1)
+                all_norms.append(values_norm)
+                valid_trials.append(trial)
+
+            # After looping, plot mean +/- std if we have any valid trials
+            if all_norms:
+                arr = np.vstack(all_norms)
+                mean_wave = arr.mean(axis=0)
+                std_wave = arr.std(axis=0)
+                plt.plot(percent_cycle, mean_wave, color='k', linewidth=2, label='Mean')
+                plt.fill_between(percent_cycle, mean_wave - std_wave, mean_wave + std_wave,
+                                    color='k', alpha=0.2, label='±1 std')
+
+            plt.xlabel("Movement Cycle (%)")
+            plt.ylabel(f"{joint_base} (deg)")
+            plt.title(f"Normalized {joint_base} movement across Trials (0–100%)")
+            plt.legend(ncol=2, fontsize='small')
+            plt.grid(True)
+            plt.show()
+
+    else:
+        # Plot individual joints (left/right separately)
+        for joint in joints_to_plot:
+            plt.figure(figsize=(10, 6))
+            all_norms = []
+            valid_trials = []
+            for trial in trial_names:
+                values = coordinates['values'][trial][joint]
+                if coordinates == coordinates_vicon or coordinates_CV:    # when looking at Vicon data
+                # set time and for Vicon/coordinates_CV
+                    if coordinates == coordinates_vicon:
+                        time = coordinates['time'][trial]
+                        indicies = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+                        idx1 = indicies[trial]["idx1_vicon"]
+                        idx2 = indicies[trial]["idx2_vicon"]
+                    else:
+                        time = coordinates['values'][trial]['time']
+                        indicies = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+                        idx1 = indicies[trial]["idx1_opencap"]
+                        idx2 = indicies[trial]["idx2_opencap"]
+
+                else:
+                    time = coordinates['speeds'][trial]['time']
+                    # hipflexion_speed = coordinates['speeds'][trial]['hip_flexion_r']
+                    # knee_angle_speed = coordinates['speeds'][trial]['knee_angle_r']
+                    hipflexion_angle = coordinates['values'][trial]['hip_flexion_r']
+                    knee_angle = coordinates['values'][trial]['knee_angle_r']
+                    dt = time[1] - time[0]
+                    fs = 1.0 / dt  # sampling frequency
+
+                    # find start/end indices for each trial
+                    
+                    # idx1 = find_first_index_after_point_LTT(hipflexion_speed, start_index=40, threshold=None, consecutive=9, cutoff=3, fs=fs, baseline_window=40, baseline_multiplier=3)
+                    # idx2 = find_first_index_after_point_STT(knee_angle_speed, threshold_low=4, threshold_high=30, consecutive=5, cutoff=6, fs=fs)
+                    idx1 = find_first_index_after_point_LTT(hipflexion_angle, start_index=40, threshold=None, consecutive=10, cutoff=None, fs=None, baseline_window=40, baseline_multiplier=3) #cutoff =3 when using speeds and not values
+                    idx2 = find_first_index_after_point_STT(knee_angle, threshold_low=2,threshold_high=30, consecutive=5, cutoff=None, fs=None)
+
+                # Validate indices
+                if idx1 is None or idx2 is None or idx1 >= idx2:
+                    print(f"{trial}: invalid thresholds {joint} (idx1={idx1}, idx2={idx2}) -> skipping")
+                    continue
+
+                # Normalize cycle and plot onto the shared normalized figure
+                percent_cycle, values_norm = normalize_cycle(time, values, idx1, idx2, num_points=num_points)
+                plt.plot(percent_cycle, values_norm, label=trial, alpha=0.5, linewidth=1)
+                all_norms.append(values_norm)
+                valid_trials.append(trial)
+
+            # After looping, plot mean +/- std if we have any valid trials
+            if all_norms:
+                arr = np.vstack(all_norms)
+                mean_wave = arr.mean(axis=0)
+                std_wave = arr.std(axis=0)
+
+                plt.plot(percent_cycle, mean_wave, color='k', linewidth=2, label='Mean')
+                plt.fill_between(percent_cycle, mean_wave - std_wave, mean_wave + std_wave,
+                            color='k', alpha=0.2, label='±1 std')
+
+            plt.xlabel("Movement Cycle (%)")
+            plt.ylabel(f"{joint} (deg)")
+            plt.title(f"Normalized {joint} movement across Trials (0–100%)")
+            plt.legend(ncol=2, fontsize='small')
+            plt.grid(True)
+            plt.show()
+
+
+def get_session_mean(coordinates, trial_names, joint, num_points=101, combine_right_left=False):
+    """
+    Returns mean and std of normalized cycles for a joint across all trials.
+    If combine_right_left is True, joint should be a joint_base (e.g., "hip_flexion"),
+    and left/right are averaged after normalization.
+    """
+    all_norms = []
+    for trial in trial_names:
+        if combine_right_left:
+            left = f"{joint}_l"
+            right = f"{joint}_r"
+            has_left = left in coordinates['values'][trial]
+            has_right = right in coordinates['values'][trial]
+            has_base = joint in coordinates['values'][trial]
+            if has_left and has_right:
+                values_left = coordinates['values'][trial][left]
+                values_right = coordinates['values'][trial][right]
+            elif has_base:
+                values = coordinates['values'][trial][joint]
+            else:
+                continue
+        else:
+            if joint not in coordinates['values'][trial]:
+                print(f"Skipping {trial}: missing {joint}")
+                continue
+            values = coordinates['values'][trial][joint]
+
+        # Index finding logic (same as before)
+        if coordinates == coordinates_vicon or coordinates_CV:
+            if coordinates == coordinates_vicon:
+                time = coordinates['time'][trial]
+                indicies = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+                idx1 = indicies[trial]["idx1_vicon"]
+                idx2 = indicies[trial]["idx2_vicon"]
+            else:
+                time = coordinates['values'][trial]['time']
+                indicies = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+                idx1 = indicies[trial]["idx1_opencap"]
+                idx2 = indicies[trial]["idx2_opencap"]
+            
+        else:
+            time = coordinates['speeds'][trial]['time']
+            # hipflexion_speed = coordinates['speeds'][trial]['hip_flexion_r']
+            # knee_angle_speed = coordinates['speeds'][trial]['knee_angle_r']
+            hipflexion_angle = coordinates['values'][trial]['hip_flexion_r']
+            knee_angle = coordinates['values'][trial]['knee_angle_r']
+            dt = time[1] - time[0]
+            fs = 1.0 / dt  # sampling frequency
+
+            # find start/end indices for each trial
+            # idx1 = find_first_index_after_point_LTT(hipflexion_speed, start_index=40, threshold=None, consecutive=9, cutoff=3, fs=fs, baseline_window=40, baseline_multiplier=3)
+            # idx2 = find_first_index_after_point_STT(knee_angle_speed, threshold_low=4, threshold_high=30, consecutive=5, cutoff=6, fs=fs)
+            idx1 = find_first_index_after_point_LTT(hipflexion_angle, start_index=40, threshold=None, consecutive=10, cutoff=None, fs=None, baseline_window=40, baseline_multiplier=3) #cutoff =3 when using speeds and not values
+            idx2 = find_first_index_after_point_STT(knee_angle, threshold_low=2,threshold_high=30, consecutive=5, cutoff=None, fs=None)
+
+        if idx1 is None or idx2 is None or idx1 >= idx2:
+            continue
+
+        #if combine_right_left is True, then combine the normalised waveforms for the joint angle on each side together
+        if combine_right_left:
+            if has_left and has_right:
+                _, norm_left = normalize_cycle(time, values_left, idx1, idx2, num_points)
+                _, norm_right = normalize_cycle(time, values_right, idx1, idx2, num_points)
+                values_norm = (norm_left + norm_right) / 2
+            elif has_base:
+                _, values_norm = normalize_cycle(time, values, idx1, idx2, num_points)
+            else:
+                continue
+        else:
+            percent_cycle, values_norm = normalize_cycle(time, values, idx1, idx2, num_points=num_points)
+
+        all_norms.append(values_norm)
+
+    if not all_norms:
+        return None, None, None
+
+    arr = np.vstack(all_norms)
+    percent_cycle = np.linspace(0, 100, num_points)
+    return percent_cycle, arr.mean(axis=0), arr.std(axis=0)
+
+
+
+def compute_rmse(wave1, wave2):
+    """
+    Compute Root Mean Square Error (RMSE) between two waveforms.
+    Both must have the same length.
+    """
+    wave1, wave2 = np.asarray(wave1), np.asarray(wave2)
+    return np.sqrt(np.mean((wave1 - wave2) ** 2))
+
+
+
+def compare_sessions_rmse_per_trial(coordinates_best, trials_best, coordinates_alt, trials_alt, joints_to_plot, joints_to_plot_combined, num_points=101):
+    """
+    Compare best-practice session to altered operating conditions.
+    Computes RMSE per trial of altered condition against the mean best-practice waveform.
+
+    Returns mean ± SD RMSE per joint.
+    """
+    # Individual joints
+    if not combine_right_left:
+        for joint in joints_to_plot:
+            # Get mean best-practice waveform
+            percent_BPC, mean_BPC, std_BPC = get_session_mean(coordinates_best, trials_best, joint, num_points=num_points)
+            if mean_BPC is None:
+                print(f"No valid trials for {joint} in best-practice session. Skipping.")
+                continue
+
+            rmse_list = []
+
+            # Loop over each trial in altered condition
+            for trial in trials_alt:
+                
+                time = coordinates_alt['speeds'][trial]['time']
+                # hipflexion_speed = coordinates_alt['speeds'][trial]['hip_flexion_r']
+                # knee_angle_speed = coordinates_alt['speeds'][trial]['knee_angle_r']
+                hipflexion_angle = coordinates_alt['values'][trial]['hip_flexion_r']
+                knee_angle = coordinates_alt['values'][trial]['knee_angle_r']
+                values = coordinates_alt['values'][trial][joint]
+                dt = time[1] - time[0]
+                fs = 1.0 / dt  # sampling frequency
+
+                # Find start/end indices for trial
+                # idx1 = find_first_index_after_point_LTT(hipflexion_speed, start_index=40, threshold=None, consecutive=9, cutoff=3, fs=fs, baseline_window=40, baseline_multiplier=3)
+                # idx2 = find_first_index_after_point_STT(knee_angle_speed, threshold_low=4, threshold_high=30, consecutive=5, cutoff=6, fs=fs)
+                idx1 = find_first_index_after_point_LTT(hipflexion_angle, start_index=40, threshold=None, consecutive=10, cutoff=None, fs=None, baseline_window=40, baseline_multiplier=3) #cutoff =3 when using speeds and not values
+                idx2 = find_first_index_after_point_STT(knee_angle, threshold_low=2,threshold_high=30, consecutive=5, cutoff=None, fs=None)
+
+                # Validate indices
+                if idx1 is None or idx2 is None or idx1 >= idx2:
+                    continue
+
+                # Normalize trial to same number of points
+                percent_cycle, values_norm = normalize_cycle(time, values, idx1, idx2, num_points=num_points)
+
+                # Compute RMSE of this trial vs best-practice mean
+                rmse = compute_rmse(values_norm, mean_BPC)
+                rmse_list.append(rmse)
+
+            if not rmse_list:
+                print(f"No valid trials for {joint} in altered condition.")
+                continue
+
+            # Compute mean ± SD RMSE
+            mean_rmse = np.mean(rmse_list)
+            std_rmse = np.std(rmse_list)
+            print(f"{joint} → RMSE (mean ± SD) = {mean_rmse:.3f} ± {std_rmse:.3f}")
+
+
+            # Compute mean ± SD waveform for altered condition
+            percent_alt, mean_alt, std_alt = get_session_mean(coordinates_alt, trials_alt, joint, num_points=num_points)
+
+            # Plot mean waveforms with SD shaded areas
+            plt.figure(figsize=(10, 6))
+            plt.plot(percent_BPC, mean_BPC, color="blue", linewidth=2, label="Best Practice Mean")
+            plt.fill_between(percent_BPC, mean_BPC-std_BPC, mean_BPC+std_BPC, color="blue", alpha=0.2)
+
+            plt.plot(percent_alt, mean_alt, color="red", linewidth=2, label="Altered Condition Mean")
+            plt.fill_between(percent_alt, mean_alt-std_alt, mean_alt+std_alt, color="red", alpha=0.2)
+
+            plt.xlabel("Movement Cycle (%)")
+            plt.ylabel(f"{joint} (deg)")
+            plt.title(f"Mean Normalized {joint} Movement ± SD\nBest Practice vs Altered Condition")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+    
+    else:
+        n_joints = len(joints_to_plot_combined)
+        corrected_alpha = 0.05 / n_joints
+        for joint_base in joints_to_plot_combined:
+            # Get mean best-practice waveform
+            percent_BPC, mean_BPC, std_BPC = get_session_mean(coordinates_best, trials_best, joint_base, num_points=num_points, combine_right_left=True)
+            if mean_BPC is None:
+                print(f"No valid trials for {joint_base} in best-practice session. Skipping.")
+                continue
+
+            rmse_list = []
+
+            # Loop over each trial in altered condition
+            for trial in trials_alt:
+                
+                left = f"{joint_base}_l"
+                right = f"{joint_base}_r"
+                has_left = left in coordinates_alt['values'][trial]
+                has_right = right in coordinates_alt['values'][trial]
+                has_base = joint_base in coordinates_alt['values'][trial]
+                
+                time = coordinates_alt['speeds'][trial]['time']
+                # hipflexion_speed = coordinates_alt['speeds'][trial]['hip_flexion_r']
+                # knee_angle_speed = coordinates_alt['speeds'][trial]['knee_angle_r']
+                hipflexion_angle = coordinates_alt['values'][trial]['hip_flexion_r']
+                knee_angle = coordinates_alt['values'][trial]['knee_angle_r']
+                dt = time[1] - time[0]
+                fs = 1.0 / dt
+
+                # Find start/end indices for trial
+                # idx1 = find_first_index_after_point_LTT(hipflexion_speed, start_index=40, threshold=None, consecutive=9, cutoff=3, fs=fs, baseline_window=40, baseline_multiplier=3)
+                # idx2 = find_first_index_after_point_STT(knee_angle_speed, threshold_low=4, threshold_high=30, consecutive=5, cutoff=6, fs=fs)
+                idx1 = find_first_index_after_point_LTT(hipflexion_angle, start_index=40, threshold=None, consecutive=10, cutoff=None, fs=None, baseline_window=40, baseline_multiplier=3) #cutoff =3 when using speeds and not values
+                idx2 = find_first_index_after_point_STT(knee_angle, threshold_low=2,threshold_high=30, consecutive=5, cutoff=None, fs=None)
+
+                # Validate indices
+                if idx1 is None or idx2 is None or idx1 >= idx2:
+                    continue
+
+                if has_left and has_right:
+                    values_left = coordinates_alt['values'][trial][left]
+                    values_right = coordinates_alt['values'][trial][right]
+                    # Normalize trial to same number of points
+                    _, norm_left = normalize_cycle(time, values_left, idx1, idx2, num_points)
+                    _, norm_right = normalize_cycle(time, values_right, idx1, idx2, num_points)
+                    values_norm = (norm_left + norm_right) / 2
+                elif has_base:
+                    values = coordinates_alt['values'][trial][joint_base]
+                    _, values_norm = normalize_cycle(time, values, idx1, idx2, num_points)
+                else:
+                    continue
+
+                # Compute RMSE of this trial vs best-practice mean
+                rmse = compute_rmse(values_norm, mean_BPC)
+                rmse_list.append(rmse)
+
+            if not rmse_list:
+                print(f"No valid trials for {joint_base} in altered condition.")
+                continue
+
+            # Compute mean ± SD RMSE
+            mean_rmse = np.mean(rmse_list)
+            std_rmse = np.std(rmse_list)
+            print(f"{joint_base} → RMSE (mean ± SD) = {mean_rmse:.3f} ± {std_rmse:.3f}")
+
+
+            # Compute mean ± SD waveform for altered condition
+            percent_alt, mean_alt, std_alt = get_session_mean(coordinates_alt, trials_alt, joint_base, num_points=num_points, combine_right_left=True)
+
+        #     # # Plot mean waveforms with SD shaded areas
+        #     # plt.plot(percent_BPC, mean_BPC, color="blue", linewidth=2, label="Best Practice Mean")
+        #     # plt.fill_between(percent_BPC, mean_BPC-std_BPC, mean_BPC+std_BPC, color="blue", alpha=0.2)
+        #     # plt.plot(percent_alt, mean_alt, color="red", linewidth=2, label="Altered Condition Mean")
+        #     # plt.fill_between(percent_alt, mean_alt-std_alt, mean_alt+std_alt, color="red", alpha=0.2)
+        #     # plt.xlabel("Movement Cycle (%)")
+        #     # plt.ylabel(f"{joint_base} (deg)")
+        #     # plt.title(f"Mean Normalized {joint_base} Movement ± SD\nBest Practice vs Altered Condition")
+        #     # plt.legend()
+        #     # plt.grid(True)
+        #     # plt.show()
+
+        # plot_joint_grid(coordinates_S1, trials_S1, coordinates_S2, trials_S2, joints_to_plot_combined, num_points=101, label_A="OpenCap BPC", label_B="OpenCap 35deg")
+        spm_bonferroni_pairwise_comparison(coordinates_best, trials_best, coordinates_alt, trials_alt, joints_to_plot_combined, alpha=0.05, num_points=101, graph=False, save_csv=True, csv_folder=os.path.join(data_folder2, "Outputs"))
+        plot_joint_grid_with_spm(coordinates_best, trials_best, coordinates_alt, trials_alt, joints_to_plot_combined, num_points=101, label_A="OpenCap BPC", label_B="OpenCap 10M")
+
+      
+
+
+def find_RMSE_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, joints_to_plot, joints_to_plot_combined, num_points=101):
+    """
+    Compare each Vicon trial waveform to its matching OpenCap trial waveform and compute RMSE for each joint.
+    Also prints mean and std RMSE for each joint.
+    """
+    indices = find_idx1_idx2_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV)
+
+    if not combine_right_left:
+        for joint in joints_to_plot:
+            print(f"\nJoint: {joint}")
+            rmse_list = []
+            for trial in trials_vicon:
+                if trial not in indices:
+                    print(f"Skipping {trial}: no indices found.")
+                    continue
+                try:
+                    # Vicon
+                    vicon_values = coordinates_vicon['values'][trial][joint]
+                    vicon_time = coordinates_vicon['time'][trial]
+                    idx1_vicon = indices[trial]['idx1_vicon']
+                    idx2_vicon = indices[trial]['idx2_vicon']
+                    # OpenCap
+                    opencap_values = upsampled_CV['values'][trial][joint]
+                    opencap_time = upsampled_CV['time'][trial]
+                    idx1_opencap = indices[trial]['idx1_opencap']
+                    idx2_opencap = indices[trial]['idx2_opencap']
+
+                    # Normalize both cycles
+                    _, vicon_norm = normalize_cycle(vicon_time, vicon_values, idx1_vicon, idx2_vicon, num_points)
+                    _, opencap_norm = normalize_cycle(opencap_time, opencap_values, idx1_opencap, idx2_opencap, num_points)
+
+                    # Compute RMSE
+                    rmse = compute_rmse(vicon_norm, opencap_norm)
+                    rmse_list.append(rmse)
+                    print(f"{trial}: RMSE = {rmse:.3f}")
+
+                except Exception as e:
+                    print(f"Skipping {trial} for {joint}: {e}")
+                    continue
+
+            # Print mean and std RMSE for this joint
+            if rmse_list:
+                mean_rmse = np.mean(rmse_list)
+                std_rmse = np.std(rmse_list)
+                print(f"{joint}: Mean RMSE = {mean_rmse:.3f}, Std RMSE = {std_rmse:.3f}")
+            else:
+                print(f"{joint}: No valid RMSE values.")
+
+            # Plot mean vicon waveforms and mean opencap waveforms with SD shaded areas
+            percent_vicon, mean_vicon, std_vicon = get_session_mean(coordinates_vicon, trials_vicon, joint)
+            percent_opencap, mean_opencap, std_opencap = get_session_mean(upsampled_CV, trials_CV, joint)
+            if mean_vicon is None or mean_opencap is None:
+                print(f"Skipping {joint}: no valid trials.")
+                continue
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(percent_vicon, mean_vicon, color="blue", linewidth=2, label="Vicon Mean")
+            plt.fill_between(percent_vicon, mean_vicon-std_vicon, mean_vicon+std_vicon, color="blue", alpha=0.2)
+
+            plt.plot(percent_opencap, mean_opencap, color="red", linewidth=2, label="OpenCap Mean")
+            plt.fill_between(percent_opencap, mean_opencap-std_opencap, mean_opencap+std_opencap, color="red", alpha=0.2)
+
+            plt.xlabel("Movement Cycle (%)")
+            plt.ylabel(f"{joint} (deg)")
+            plt.title(f"Mean Normalized {joint} Movement ± SD\nVicon vs OpenCap")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+    
+    else:
+        for joint_base in joints_to_plot_combined:
+            print(f"\nJoint: {joint_base}")
+            rmse_list = []
+            for trial in trials_vicon:
+                if trial not in indices:
+                    print(f"Skipping {trial}: no indices found.")
+                    continue
+                try:
+                    left = f"{joint_base}_l"
+                    right = f"{joint_base}_r"
+                    # Vicon
+                    
+
+                    vicon_time = coordinates_vicon['time'][trial]
+                    idx1_vicon = indices[trial]['idx1_vicon']
+                    idx2_vicon = indices[trial]['idx2_vicon']
+                    # OpenCap
+                    
+                    opencap_time = upsampled_CV['time'][trial]
+                    idx1_opencap = indices[trial]['idx1_opencap']
+                    idx2_opencap = indices[trial]['idx2_opencap']
+
+                    # Check for left/right keys
+                    has_left_vicon = left in coordinates_vicon['values'][trial]
+                    has_right_vicon = right in coordinates_vicon['values'][trial]
+                    has_left_opencap = left in upsampled_CV['values'][trial]
+                    has_right_opencap = right in upsampled_CV['values'][trial]
+                    has_base_vicon = joint_base in coordinates_vicon['values'][trial]
+                    has_base_opencap = joint_base in upsampled_CV['values'][trial]
+
+                    # If both left/right exist, combine
+                    if has_left_vicon and has_right_vicon and has_left_opencap and has_right_opencap:
+                        vicon_values_left = coordinates_vicon['values'][trial][left]
+                        vicon_values_right = coordinates_vicon['values'][trial][right]
+                        opencap_values_left = upsampled_CV['values'][trial][left]
+                        opencap_values_right = upsampled_CV['values'][trial][right]
+                        # Normalize and average left/right movements for vicon and opencap
+                        _, vicon_norm_left = normalize_cycle(vicon_time, vicon_values_left, idx1_vicon, idx2_vicon, num_points)
+                        _, vicon_norm_right = normalize_cycle(vicon_time, vicon_values_right, idx1_vicon, idx2_vicon, num_points)
+                        vicon_norm = (vicon_norm_left + vicon_norm_right) / 2
+                        _, opencap_norm_left = normalize_cycle(opencap_time, opencap_values_left, idx1_opencap, idx2_opencap, num_points)
+                        _, opencap_norm_right = normalize_cycle(opencap_time, opencap_values_right, idx1_opencap, idx2_opencap, num_points)
+                        opencap_norm = (opencap_norm_left + opencap_norm_right) / 2
+                    # If only base joint exists, use it directly (this is for pelvis movements)
+                    elif has_base_vicon and has_base_opencap:
+                        vicon_values = coordinates_vicon['values'][trial][joint_base]
+                        opencap_values = upsampled_CV['values'][trial][joint_base]
+                        _, vicon_norm = normalize_cycle(vicon_time, vicon_values, idx1_vicon, idx2_vicon, num_points)
+                        _, opencap_norm = normalize_cycle(opencap_time, opencap_values, idx1_opencap, idx2_opencap, num_points)
+                    else:
+                        print(f"Skipping {trial}: missing data for {joint_base}")
+                        continue
+
+                    # Compute RMSE
+                    rmse = compute_rmse(vicon_norm, opencap_norm)
+                    rmse_list.append(rmse)
+                    print(f"{trial}: RMSE = {rmse:.3f}")
+
+                except Exception as e:
+                    print(f"Skipping {trial} for {joint_base}: {e}")
+                    continue
+
+            # Print mean and std RMSE for this joint
+            if rmse_list:
+                mean_rmse = np.mean(rmse_list)
+                std_rmse = np.std(rmse_list)
+                print(f"{joint_base}: Mean RMSE = {mean_rmse:.3f}, Std RMSE = {std_rmse:.3f}")
+            else:
+                print(f"{joint_base}: No valid RMSE values.")
+            
+            # Plot mean vicon waveforms and mean opencap waveforms with SD shaded areas
+            percent_vicon, mean_vicon, std_vicon = get_session_mean(coordinates_vicon, trials_vicon, joint_base, combine_right_left=True)
+            percent_opencap, mean_opencap, std_opencap = get_session_mean(upsampled_CV, trials_CV, joint_base, combine_right_left=True)
+            if mean_vicon is None or mean_opencap is None:
+                print(f"Skipping {joint_base}: no valid trials.")
+                continue
+            # plt.figure(figsize=(10, 6))
+            # plt.plot(percent_vicon, mean_vicon, color="blue", linewidth=2, label="Vicon Mean")
+            # plt.fill_between(percent_vicon, mean_vicon-std_vicon, mean_vicon+std_vicon, color="blue", alpha=0.2)
+            # plt.plot(percent_opencap, mean_opencap, color="red", linewidth=2, label="OpenCap Mean")
+            # plt.fill_between(percent_opencap, mean_opencap-std_opencap, mean_opencap+std_opencap, color="red", alpha=0.2)
+            # plt.xlabel("Movement Cycle (%)")
+            # plt.ylabel(f"{joint_base} (deg)")
+            # plt.title(f"Mean Normalized {joint_base} Movement ± SD\nVicon vs OpenCap")
+            # plt.legend()
+            # plt.grid(True)
+            # plt.show()
+            
+        # plot_joint_grid(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, joints_to_plot_combined, num_points=101, label_A="Vicon", label_B="OpenCap")
+        spm_bonferroni_pairwise_comparison(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, joints_to_plot_combined, alpha=0.05, num_points=101, graph=False, save_csv=True, csv_folder=os.path.join(data_folder, "Outputs"))
+        plot_joint_grid_with_spm(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, joints_to_plot_combined, num_points=101, label_A="Vicon", label_B="OpenCap")
+
+      
+
+
+def spm_bonferroni_pairwise_comparison(coordinates_A, trials_A, coordinates_B, trials_B, joints_to_plot_combined, num_points=101, alpha=0.05, graph=False, save_csv=False, csv_folder=None):
+    """
+    Performs Bonferroni-corrected SPM paired t-tests for each joint after normalization.
+    Saves summary of significant clusters (location, max/mean t, p-value) to a CSV file if save_csv=True.
+    Optionally plots SPM graphs if graph=True.
+    """
+    n_joints = len(joints_to_plot_combined)
+    corrected_alpha = alpha / n_joints
+
+    # Prepare CSV output if requested
+    if save_csv:
+        if csv_folder is None:
+            csv_folder = "./Data/Outputs"
+        os.makedirs(csv_folder, exist_ok=True)
+        csv_path = os.path.join(csv_folder, "spm_significant_clusters.csv")
+        csvfile = open(csv_path, "w", newline="")
+        writer = csv.writer(csvfile)
+        writer.writerow(["Joint", "Cluster Start (%)", "Cluster End (%)", "max|t|", "mean|t|", "p-value"])
+
+    for joint in joints_to_plot_combined:
+        # Only include trials that are valid in BOTH sessions
+        paired_trials = []
+        for trial_A, trial_B in zip(trials_A, trials_B):
+            # Try to get normalized waveforms for both sessions
+            _, norm_A, _ = get_session_mean(coordinates_A, [trial_A], joint, num_points=num_points, combine_right_left=True)
+            _, norm_B, _ = get_session_mean(coordinates_B, [trial_B], joint, num_points=num_points, combine_right_left=True)
+            if norm_A is not None and norm_B is not None:
+                paired_trials.append((trial_A, trial_B))
+
+        # Now build arrays using only paired valid trials
+        waves_A = []
+        waves_B = []
+        for trial_A, trial_B in paired_trials:
+            _, norm_A, _ = get_session_mean(coordinates_A, [trial_A], joint, num_points=num_points, combine_right_left=True)
+            _, norm_B, _ = get_session_mean(coordinates_B, [trial_B], joint, num_points=num_points, combine_right_left=True)
+            waves_A.append(norm_A)
+            waves_B.append(norm_B)
+
+        waves_A = np.array(waves_A)
+        waves_B = np.array(waves_B)
+        if waves_A.shape != waves_B.shape or waves_A.shape[0] == 0:
+            print(f"Skipping {joint}: shape mismatch or no valid paired trials.")
+            continue
+
+        # SPM paired t-test
+        t = spm1d.stats.ttest_paired(waves_A, waves_B)
+        ti = t.inference(alpha=corrected_alpha, two_tailed=True)
+        print(f"{joint}: SPM t-test, Bonferroni alpha={corrected_alpha:.4f}")
+
+        # Print/save summary for each significant cluster
+        percent_cycle = np.linspace(0, 100, waves_A.shape[1])
+        for cluster, p in zip(ti.clusters, ti.p):
+            if p < corrected_alpha:
+                start, stop = cluster.endpoints  # in percent
+                mask = (percent_cycle >= start) & (percent_cycle <= stop)
+                max_t = np.max(np.abs(t.z[mask]))
+                mean_t = np.mean(np.abs(t.z[mask]))
+                print(f"  Significant cluster {start:.1f}–{stop:.1f}%: max|t|={max_t:.2f}, mean|t|={mean_t:.2f}, p={p:.4f}")
+                if save_csv:
+                    writer.writerow([joint, f"{start:.1f}", f"{stop:.1f}", f"{max_t:.2f}", f"{mean_t:.2f}", f"{p:.4g}"])
+
+        # Plot SPM graph if requested
+        if graph:
+            ti.plot()
+            plt.title(f"SPM Pairwise Comparison: {joint}")
+            plt.show()
+
+        
+
+
+def plot_joint_grid_with_spm(coordinates_A, trials_A, coordinates_B, trials_B, joints_to_plot_combined, num_points=101, label_A="Session A", label_B="Session B", alpha=0.05):
+    n_joints = len(joints_to_plot_combined)
+    n_cols = 3
+    n_rows = int(np.ceil(n_joints / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.5*n_cols, 3.5*n_rows), sharex=True)
+    axes = axes.flatten()
+
+    legend_handles = []
+    legend_labels = []
+    corrected_alpha = alpha / n_joints
+
+    for i, joint_base in enumerate(joints_to_plot_combined):
+        ax = axes[i]
+        percent_A, mean_A, std_A = get_session_mean(coordinates_A, trials_A, joint_base, combine_right_left=True)
+        percent_B, mean_B, std_B = get_session_mean(coordinates_B, trials_B, joint_base, combine_right_left=True)
+        if mean_A is None or mean_B is None:
+            ax.set_visible(False)
+            continue
+
+        h1, = ax.plot(percent_A, mean_A, color="blue", linewidth=2, label=f"{label_A} Mean")
+        ax.fill_between(percent_A, mean_A-std_A, mean_A+std_A, color="blue", alpha=0.2)
+        h2, = ax.plot(percent_B, mean_B, color="red", linewidth=2, label=f"{label_B} Mean")
+        ax.fill_between(percent_B, mean_B-std_B, mean_B+std_B, color="red", alpha=0.2)
+        ax.set_title(joint_base.replace("_", " ").title(), fontsize=14)
+        # Only set x-label for bottom row
+        if i // n_cols == n_rows - 1:
+            ax.set_xlabel("Movement Cycle (%)", fontsize=12)
+        # Only set y-label for first column
+        if i % n_cols == 0:
+            ax.set_ylabel("Angle (deg)", fontsize=12)
+        ax.grid(True)
+
+        bar = None
+
+        # --- Paired trial logic for SPM ---
+        paired_trials = []
+        for trial_A, trial_B in zip(trials_A, trials_B):
+            _, norm_A, _ = get_session_mean(coordinates_A, [trial_A], joint_base, num_points=num_points, combine_right_left=True)
+            _, norm_B, _ = get_session_mean(coordinates_B, [trial_B], joint_base, num_points=num_points, combine_right_left=True)
+            if norm_A is not None and norm_B is not None:
+                paired_trials.append((trial_A, trial_B))
+
+        waves_A = []
+        waves_B = []
+        for trial_A, trial_B in paired_trials:
+            _, norm_A, _ = get_session_mean(coordinates_A, [trial_A], joint_base, num_points=num_points, combine_right_left=True)
+            _, norm_B, _ = get_session_mean(coordinates_B, [trial_B], joint_base, num_points=num_points, combine_right_left=True)
+            waves_A.append(norm_A)
+            waves_B.append(norm_B)
+
+        waves_A = np.array(waves_A)
+        waves_B = np.array(waves_B)
+        if waves_A.shape == waves_B.shape and waves_A.shape[0] > 0:
+            t = spm1d.stats.ttest_paired(waves_A, waves_B)
+            ti = t.inference(alpha=corrected_alpha, two_tailed=True)
+            # Draw bars for significant clusters
+            for cluster, p in zip(ti.clusters, ti.p):
+                if p < corrected_alpha:
+                    start, stop = cluster.endpoints  # already in percent
+                    bar = ax.add_patch(
+                        patches.Rectangle(
+                            (start, ax.get_ylim()[0]),  # (x, y)
+                            stop - start,               # width in percent
+                            0.02*(ax.get_ylim()[1] - ax.get_ylim()[0]),  # height (2% of y-range)
+                            color='k', clip_on=False, label="SPM Bonf.-corrected p<0.05"
+                        )
+                    )
+        else:
+            bar = None
+
+        if not legend_handles:
+            legend_handles.extend([h1, h2])
+            legend_labels.extend([f"{label_A} Mean", f"{label_B} Mean"])
+        # Only add the bar label once for the legend
+        if bar is not None and "SPM Bonf.-corrected p<0.05" not in legend_labels:
+            legend_handles.append(bar)
+            legend_labels.append("SPM Bonf.-corrected p<0.05")
+
+    for j in range(i+1, len(axes)):
+        axes[j].set_visible(False)
+
+    fig.legend(legend_handles, legend_labels, loc='lower center', bbox_to_anchor=(0.5, -0.02), ncol=3, fontsize=14, frameon=False)
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    plt.show()
+
+
+# spm_bonferroni_pairwise_comparison(coordinates_S1, trials_S1,coordinates_S2, trials_S2, joints_to_plot_combined, num_points=101, alpha=0.05)
+
+# plot_normalized_waveforms(coordinates, trial_names, joints_to_plot)
+# plot_normalized_waveforms(coordinates_S2, trials_S2, joints_to_plot, joints_to_plot_combined)
+
+
+# compare_sessions_rmse_per_trial(coordinates_S1, trials_S1, coordinates_S2, trials_S2, joints_to_plot, joints_to_plot_combined, num_points=101)
+
+#for finding the rmse between opencap and vicon data for the concurent validity study use the following code:
+
+
+
+# plot_normalized_waveforms(coordinates_vicon, trials_vicon, joints_to_plot, joints_to_plot_combined)
+# plot_normalized_waveforms(upsampled_CV, trials_CV, joints_to_plot, joints_to_plot_combined)
+
+find_RMSE_CV(coordinates_vicon, trials_vicon, upsampled_CV, trials_CV, joints_to_plot, joints_to_plot_combined_no_pelvis, num_points=101)   #no pelvis joints are included as 5 of the vicon trials contained no pelvis joint data
